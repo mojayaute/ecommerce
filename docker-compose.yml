@@ -1,0 +1,92 @@
+name: mvp2-commerce
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ecommerce
+      POSTGRES_USER: ecommerce
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ecommerce -d ecommerce"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ./backend
+      target: prod
+    environment:
+      APP_NAME: MVP2 Commerce
+      APP_ENV: production
+      APP_DEBUG: "false"
+      APP_KEY: ${APP_KEY:-}
+      APP_URL: http://localhost:${WEB_PORT:-8080}
+      LOG_CHANNEL: stderr
+      LOG_LEVEL: info
+      DB_CONNECTION: pgsql
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_DATABASE: ecommerce
+      DB_USERNAME: ecommerce
+      DB_PASSWORD: secret
+      CACHE_STORE: file
+      QUEUE_CONNECTION: sync
+      SESSION_DRIVER: array
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8000/api/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+
+  web:
+    build:
+      context: ./frontend
+      target: runtime
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  api-test:
+    profiles: ["test"]
+    build:
+      context: ./backend
+      target: dev
+    environment:
+      DB_HOST: db
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web-test:
+    profiles: ["test"]
+    build:
+      context: ./frontend
+      target: test
+
+  e2e:
+    profiles: ["test"]
+    build:
+      context: ./frontend
+      target: e2e
+    environment:
+      BASE_URL: http://web:8080
+      CSV_FIXTURE: /fixtures/products.csv
+    volumes:
+      - ./backend/tests/Fixtures:/fixtures:ro
+    depends_on:
+      web:
+        condition: service_started
+
+volumes:
+  db-data:
